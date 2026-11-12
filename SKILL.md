@@ -42,6 +42,8 @@ description: 中文长篇小说全流程创作技能（v1.0.0）。当用户想�
 | 事件矩阵 + 冷却机制 | `[已实现]` | 自动集成 |
 | 跨Agent双智能体审核 | `[已实现]` | `/双审` |
 | 读者群体 + 写作风格强制确认 | `[已实现]` | `/一键开书 --target-audience --writing-style` |
+| Novel-RAG 独立高维记忆 + 单向取代链 | `[已实现]` | 自动集成 / `scripts/novel_rag_core.py` |
+| Obsidian 动态双链与 Canvas 白板图谱联动 | `[已实现]` | 自动集成 / `scripts/obsidian_graph_bridge.py` |
 
 ### 300万字一致性保证机制
 

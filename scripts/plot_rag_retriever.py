@@ -663,6 +663,20 @@ def write_context_md(project_root: Path, result: Dict[str, object]) -> Path:
             lines.append(s)
             lines.append("```")
 
+    # 融合扩展：如果存在 Novel-RAG 独立数据库，自动追加高维语义记忆
+    db_file = project_root / ".novel_rag" / "novel_memory.db"
+    if db_file.exists():
+        try:
+            from novel_rag_core import NovelRAG
+            rag = NovelRAG(project_root)
+            brief_text = rag.generate_context_brief(str(result.get("query", "")))
+            rag.close()
+            if brief_text:
+                lines.append("")
+                lines.append(brief_text)
+        except Exception:
+            pass
+
     lines.append("")
     lines.append("## 写作前执行建议")
     lines.append("1. 读取上述 Top 章节，确认人物关系与伏笔状态。")
