@@ -71,11 +71,39 @@ class TestNovelFlowExecutor(unittest.TestCase):
         self.assertFalse(payload.get("awaiting_draft"))
         self.assertTrue(payload.get("auto_draft_applied"))
         self.assertTrue(payload.get("gate_passed_final"))
-        meta_file = self.tmpdir / "00_memory" / "retrieval" / "chapter_meta" / "第2章-待写.meta.json"
+        # 开书时生成的「第1章-开篇待写」还是占位草稿，continue-write 应当先把这一章写完
+        meta_file = self.tmpdir / "00_memory" / "retrieval" / "chapter_meta" / "第1章-开篇待写.meta.json"
         self.assertTrue(meta_file.exists())
         meta = json.loads(meta_file.read_text(encoding="utf-8"))
-        self.assertEqual(meta.get("chapter_file"), "第2章-待写.md")
+        self.assertEqual(meta.get("chapter_file"), "第1章-开篇待写.md")
         self.assertIn("events", meta)
+
+    def test_continue_write_fills_stub_chapter_first(self):
+        """开书生成的第 1 章占位草稿必须先被写掉，不能直接跳到第 2 章。"""
+        run_cmd([
+            "one-click",
+            "--project-root",
+            str(self.tmpdir),
+            "--title",
+            "雾港回声",
+            "--genre",
+            "悬疑",
+            "--idea",
+            "主角在旧港区发现失踪名单",
+        ])
+        _, payload = run_cmd([
+            "continue-write",
+            "--project-root",
+            str(self.tmpdir),
+            "--query",
+            "主角在旧港区第一次看清名单上的名字",
+        ])
+        # 只断言选章行为：模板兜底稿未必过门禁，那是质量层的事，不影响"先写第1章"的判定
+        self.assertTrue(
+            str(payload.get("chapter_file", "")).endswith("第1章-开篇待写.md"),
+            payload.get("chapter_file"),
+        )
+        self.assertFalse((self.tmpdir / "03_manuscript" / "第2章-待写.md").exists())
 
     def test_continue_write_auto_retry_fix_kb(self):
         run_cmd([

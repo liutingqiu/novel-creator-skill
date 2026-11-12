@@ -1915,7 +1915,12 @@ def continue_write(args: argparse.Namespace) -> Dict[str, object]:
             if path_error:
                 return {"ok": False, "error": path_error}
         else:
-            chapter_path = (manuscript_dir / next_chapter_filename(manuscript_dir, title=args.chapter_title)).resolve()
+            latest = latest_chapter(manuscript_dir)
+            if latest is not None and chapter_is_draft_stub(latest):
+                # 最新一章还是开书时生成的占位草稿：先把这一章写完，别跳过它去开下一章
+                chapter_path = latest.resolve()
+            else:
+                chapter_path = (manuscript_dir / next_chapter_filename(manuscript_dir, title=args.chapter_title)).resolve()
         original_chapter_path = chapter_path
 
         created_chapter_stub = False
