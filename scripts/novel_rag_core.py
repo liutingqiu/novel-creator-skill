@@ -87,6 +87,57 @@ def fts_text_for(*parts: Optional[str]) -> str:
     return " ".join(fts_tokens(" ".join(part or "" for part in parts)))
 
 
+# 表格里的表头单元格：出现在首列时是表头而不是实体名
+TABLE_HEADER_WORDS = {
+    "势力名", "等级名", "规则", "规则名", "地点名", "物品名", "内容", "角色", "名称", "分类",
+    "描述", "揭示章节", "已知角色", "持有者", "功能", "获得章节", "当前状态", "类型", "首次出现",
+    "关联势力", "备注", "退场章节", "退场原因", "是否可能回归", "对读者是否可见", "影响范围",
+    "知情角色", "章节范围", "境界", "等级", "势力", "人物", "关系", "秘密", "真相",
+    "序列", "势力代号", "层级定位", "核心利益诉求与矛盾", "具体名称", "物理生命形态机制",
+    "具体境界名", "境界名", "名称/代号",
+}
+
+
+def _section_etype(heading: str) -> Optional[str]:
+    """按小节标题判断表格里实体的类型；判断不了就不猜，直接跳过。"""
+    text = heading or ""
+    if "行踪" in text:
+        return None
+    if any(key in text for key in ("势力", "宗门", "神朝", "组织", "派系")):
+        return "faction"
+    if any(key in text for key in ("地点", "地理", "城池", "秘境", "场景")):
+        return "location"
+    if any(key in text for key in ("物品", "资源", "法宝", "丹药", "法器")):
+        return "item"
+    if any(key in text for key in ("规则", "法则", "秘密", "真相", "禁忌", "铁律")):
+        return "worldrule"
+    if any(key in text for key in ("等级", "境界", "阶梯", "体系")):
+        return "power_system"
+    if any(key in text for key in ("角色", "人物")):
+        return "character"
+    return None
+
+
+def clean_entity_name(raw: str) -> Tuple[str, str]:
+    """剥离括号注解/编号，返回 (实体名, 注解)。
+
+    例：'苏凌霜（前期假女主 / 合作者）' -> ('苏凌霜', '前期假女主 / 合作者')
+    """
+    text = (raw or "").strip()
+    text = text.strip("`").strip()
+    text = re.sub(r"^\*\*(.*)\*\*$", r"\1", text).strip()
+    text = re.sub(r"^\[(.*)\]$", r"\1", text).strip()
+    text = re.sub(r"^\d+[\.\、]\s*", "", text)
+    annotation = ""
+    m = re.match(r"^(.*?)[（(]([^）)]*)[)）]\s*$", text)
+    if m:
+        text, annotation = m.group(1).strip(), m.group(2).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or text in TABLE_HEADER_WORDS:
+        return "", annotation
+    return text, annotation
+
+
 # 权威层级
 TIERS = {
     0: "作者铁律/绝对红线",
@@ -667,41 +718,64 @@ class NovelRAG:
     # ──────────────────────────────────────────────────────────
 
     def ingest_from_workspace(self) -> Dict[str, int]:
-        """将 00_memory/ 下的现有世界观、人物卡解析并录入到 SQLite 中。"""
+        """将 00_memory/ 下的现有世界观、人物卡解析并录入到 SQLite 中。
+
+        分类规则（2026-11-12 修正）：
+        - 角色卡只认带"身份/与主角关系"字段的 ### 小节，避免把"核心配角"这类标题当人名；
+        - world_state 的表格按所在小节标题映射 etype，而不是一律 faction；
+        - 跳过表头行与"行踪"表，括号注解（如"苏凌霜（前期假女主）"）剥离进 note。
+        """
         counts = {"entities": 0, "relations": 0, "memories": 0}
 
         # 1. 角色追踪器 character_tracker.md
         char_file = self.project_root / "00_memory" / "character_tracker.md"
         if char_file.exists():
             text = read_text(char_file)
-            # 提取主角
             prot_m = re.search(r"##\s*主角[：:]\s*([^\n]+)", text)
             if prot_m:
-                pname = prot_m.group(1).strip()
-                self.add_entity(name=pname, etype="character", note="主角", tier=0)
-                counts["entities"] += 1
-                self.remember(claim=f"主角姓名是{pname}", mtype="fact", tier=0, subject="character")
-                counts["memories"] += 1
-
-            # 提取核心配角
-            sub_matches = re.finditer(r"###\s*([^\n]+)", text)
-            for sm in sub_matches:
-                cname = sm.group(1).strip()
-                if cname and not cname.startswith("{"):
-                    self.add_entity(name=cname, etype="character", note="配角", tier=1)
+                pname, annotation = clean_entity_name(prot_m.group(1))
+                if pname and pname not in ("主角", "待定", "未命名"):
+                    self.add_entity(name=pname, etype="character", note=annotation or "主角", tier=0)
                     counts["entities"] += 1
+                    self.remember(claim=f"主角姓名是{pname}", mtype="fact", tier=0, subject="character")
+                    counts["memories"] += 1
 
-        # 2. 世界状态 world_state.md
+            # 只把真正有人物字段的小节当角色卡
+            for sm in re.finditer(r"^###\s+([^\n]+)\n(.*?)(?=^###\s|^##\s|\Z)", text, re.M | re.S):
+                cname, annotation = clean_entity_name(sm.group(1))
+                body = sm.group(2)
+                if not cname or cname in ("核心配角", "主要配角", "配角", "角色", "已退场角色"):
+                    continue
+                if "身份" not in body and "与主角关系" not in body:
+                    continue
+                self.add_entity(name=cname, etype="character", note=annotation or "配角", tier=1)
+                counts["entities"] += 1
+
+        # 2. 世界状态 world_state.md：按小节标题映射实体类型
         world_file = self.project_root / "00_memory" / "world_state.md"
         if world_file.exists():
             wtext = read_text(world_file)
-            lines = wtext.splitlines()
-            for line in lines:
-                if line.strip().startswith("|") and not line.startswith("|-"):
-                    parts = [p.strip() for p in line.split("|") if p.strip()]
-                    if len(parts) >= 2 and parts[0] != "势力名" and parts[0] != "等级名" and not parts[0].startswith("{"):
-                        self.add_entity(name=parts[0], etype="faction", note=parts[1] if len(parts) > 1 else "", tier=1)
-                        counts["entities"] += 1
+            current_etype = None
+            for line in wtext.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    current_etype = _section_etype(stripped.lstrip("#").strip())
+                    continue
+                if not stripped.startswith("|") or current_etype is None:
+                    continue
+                if re.fullmatch(r"[|\-:\s]+", stripped):
+                    continue  # 分隔行 |---|
+                cells = [c.strip() for c in stripped.strip("|").split("|")]
+                if not cells or not cells[0]:
+                    continue
+                if cells[0] in TABLE_HEADER_WORDS:
+                    continue
+                ename, annotation = clean_entity_name(cells[0])
+                if not ename:
+                    continue
+                note = annotation or (cells[1] if len(cells) > 1 else "")
+                self.add_entity(name=ename, etype=current_etype, note=note, tier=1)
+                counts["entities"] += 1
 
         # 3. 主线计划 novel_plan.md 提取绝对规则
         plan_file = self.project_root / "00_memory" / "novel_plan.md"

@@ -1813,6 +1813,40 @@ def auto_fix_after_gate_failure(
     return chapter_path, actions, quality
 
 
+def _sync_novel_rag(project_root: Path) -> Dict[str, object]:
+    """章节落盘后，把 00_memory 增量同步进 Novel-RAG 并刷新 Obsidian 图谱。
+
+    任何异常只记录、不抛出：检索层的问题不能拖死写作主流程。
+    """
+    try:
+        from novel_rag_core import NovelRAG
+        from obsidian_graph_bridge import ObsidianBridge
+
+        rag = NovelRAG(project_root)
+        try:
+            counts = rag.ingest_from_workspace()
+        finally:
+            rag.close()
+
+        bridge = ObsidianBridge(project_root)
+        try:
+            notes = bridge.export_entities_to_vault()
+            canvas_path = bridge.export_canvas()
+        finally:
+            bridge.close()
+
+        return {
+            "ok": True,
+            "entities": counts.get("entities", 0),
+            "memories": counts.get("memories", 0),
+            "notes": notes,
+            "canvas": str(canvas_path),
+        }
+    except Exception as exc:  # noqa: BLE001 - 同步失败不影响写作
+        print(f"[警告] Novel-RAG 同步失败（不影响本章写作）: {exc}")
+        return {"ok": False, "error": str(exc)}
+
+
 def continue_write(args: argparse.Namespace) -> Dict[str, object]:
     project_root = Path(args.project_root).expanduser().resolve()
     project_structure(project_root)
@@ -2282,9 +2316,11 @@ def continue_write(args: argparse.Namespace) -> Dict[str, object]:
                     retrieval_stats = rs_obj
 
         runtime_ms = round((time.time() - started_at) * 1000, 2)
+        rag_sync = _sync_novel_rag(project_root)
         result: Dict[str, object] = {
             "ok": ok,
             "command": "continue-write",
+            "rag_sync": rag_sync,
             "project_root": str(project_root),
             "chapter_file": str(chapter_path) if chapter_path else "",
             "pacing_mode": pacing_mode,
