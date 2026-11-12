@@ -87,6 +87,9 @@ def fts_text_for(*parts: Optional[str]) -> str:
     return " ".join(fts_tokens(" ".join(part or "" for part in parts)))
 
 
+# 占位符标记：带这些字样的实体名不入库（写作前专有名词未定稿的常态）
+PLACEHOLDER_MARKERS = ("待定", "暂代", "暂定", "占位", "待补")
+
 # 表格里的表头单元格：出现在首列时是表头而不是实体名
 TABLE_HEADER_WORDS = {
     "势力名", "等级名", "规则", "规则名", "地点名", "物品名", "内容", "角色", "名称", "分类",
@@ -134,6 +137,9 @@ def clean_entity_name(raw: str) -> Tuple[str, str]:
         text, annotation = m.group(1).strip(), m.group(2).strip()
     text = re.sub(r"\s+", " ", text).strip()
     if not text or text in TABLE_HEADER_WORDS:
+        return "", annotation
+    # 占位符不进图谱：等专有名词定稿后再入库，避免 [待定]/[暂代名] 污染 Obsidian
+    if any(marker in text for marker in PLACEHOLDER_MARKERS):
         return "", annotation
     return text, annotation
 
