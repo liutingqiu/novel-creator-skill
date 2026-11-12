@@ -2316,7 +2316,8 @@ def continue_write(args: argparse.Namespace) -> Dict[str, object]:
                     retrieval_stats = rs_obj
 
         runtime_ms = round((time.time() - started_at) * 1000, 2)
-        rag_sync = _sync_novel_rag(project_root)
+        # 只同步已过门禁的定稿章节：草稿期不更新图谱，避免废稿污染
+        rag_sync = _sync_novel_rag(project_root) if gate_passed_final else {"ok": True, "skipped": "gate_not_passed"}
         result: Dict[str, object] = {
             "ok": ok,
             "command": "continue-write",
