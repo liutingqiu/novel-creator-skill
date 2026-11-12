@@ -57,6 +57,36 @@ DEFAULT_DECAY = {
     "task": "short",
 }
 
+# 中文切分：unicode61 不认中文子串，入库/查询统一走二元组，确保"后山禁地"能命中"后山禁地深处…"
+_CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+_ASCII_WORD_RE = re.compile(r"[A-Za-z0-9_]{2,}")
+
+
+def fts_tokens(text: str) -> List[str]:
+    """把文本切成 FTS 可匹配的最小单元：中文二元组 + 英文单词。"""
+    text = normalize_text(text or "")
+    tokens: List[str] = []
+    for word in _ASCII_WORD_RE.findall(text):
+        tokens.append(word.lower())
+    for run in _CJK_RUN_RE.findall(text):
+        if len(run) == 1:
+            tokens.append(run)
+        for i in range(len(run) - 1):
+            tokens.append(run[i : i + 2])
+    seen: Set[str] = set()
+    ordered: List[str] = []
+    for token in tokens:
+        if token not in seen:
+            seen.add(token)
+            ordered.append(token)
+    return ordered
+
+
+def fts_text_for(*parts: Optional[str]) -> str:
+    """把多个字段拼成入库用的分词串。"""
+    return " ".join(fts_tokens(" ".join(part or "" for part in parts)))
+
+
 # 权威层级
 TIERS = {
     0: "作者铁律/绝对红线",
@@ -89,6 +119,9 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 
 -- 全文检索虚表
+-- 注意：unicode61 会把一整串连续中文当成单个 token，中文子串检索会全部落空。
+-- 因此额外维护 fts_text：入库时把中文切成二元组、英文按单词空格拼接，
+-- 查询侧用同一套切分做 OR 匹配（见 fts_tokens）。
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(
   chunk_id UNINDEXED,
   claim,
@@ -96,6 +129,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(
   falsifier,
   subject,
   tags,
+  fts_text,
   tokenize='unicode61'
 );
 
@@ -167,7 +201,47 @@ class NovelRAG:
         conn.row_factory = sqlite3.Row
         with conn:
             conn.executescript(SCHEMA_SQL)
+            self._migrate_fts(conn)
+            self._dedupe_relations(conn)
         return conn
+
+    @staticmethod
+    def _migrate_fts(conn: sqlite3.Connection) -> None:
+        """旧库的 fts 表没有 fts_text 列，打开时重建并回填，保证中文可检索。"""
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(fts_memories)").fetchall()]
+        if "fts_text" in cols:
+            return
+        conn.executescript("DROP TABLE IF EXISTS fts_memories;")
+        conn.executescript(
+            """
+            CREATE VIRTUAL TABLE fts_memories USING fts5(
+              chunk_id UNINDEXED, claim, premise, falsifier, subject, tags, fts_text,
+              tokenize='unicode61'
+            );
+            """
+        )
+        rows = conn.execute(
+            "SELECT chunk_id, claim, premise, falsifier, subject, tags FROM memories"
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "INSERT INTO fts_memories (chunk_id, claim, premise, falsifier, subject, tags, fts_text)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row[0], row[1], row[2] or "", row[3] or "", row[4] or "", row[5] or "",
+                    fts_text_for(row[1], row[2], row[3], row[4], row[5]),
+                ),
+            )
+
+    @staticmethod
+    def _dedupe_relations(conn: sqlite3.Connection) -> None:
+        """老数据把 chunk_id 写成 NULL，UNIQUE 约束对 NULL 失效，这里先归一再去重。"""
+        conn.execute(
+            "DELETE FROM relations WHERE id NOT IN ("
+            " SELECT MIN(id) FROM relations GROUP BY a, b, rel, IFNULL(chunk_id, '')"
+            ")"
+        )
+        conn.execute("UPDATE relations SET chunk_id = '' WHERE chunk_id IS NULL")
 
     def close(self):
         if self.conn:
@@ -204,18 +278,31 @@ class NovelRAG:
 
         now = time.time()
         if not chunk_id:
-            raw_hash = hashlib.sha256(f"{claim}:{now}".encode("utf-8")).hexdigest()[:12]
+            # 幂等键：同 mtype + subject + 同文本 → 同一个 chunk_id，重复 ingest 不会增殖。
+            key = f"{mtype}|{subject or ''}|{claim}"
+            raw_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
             chunk_id = f"mem_{mtype[:3]}_{raw_hash}"
 
         with self.conn:
-            # 插入或替换
+            # 冲突时更新内容，但保留 created_at / superseded 链 / 反馈计数
             self.conn.execute(
                 """
-                INSERT OR REPLACE INTO memories (
+                INSERT INTO memories (
                     chunk_id, mtype, premise, claim, falsifier,
                     decay_class, tier, subject, tags, chapter_no,
                     created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chunk_id) DO UPDATE SET
+                    mtype = excluded.mtype,
+                    premise = excluded.premise,
+                    claim = excluded.claim,
+                    falsifier = excluded.falsifier,
+                    decay_class = excluded.decay_class,
+                    tier = excluded.tier,
+                    subject = excluded.subject,
+                    tags = excluded.tags,
+                    chapter_no = excluded.chapter_no,
+                    updated_at = excluded.updated_at
                 """,
                 (
                     chunk_id, mtype, premise, claim, falsifier,
@@ -223,14 +310,17 @@ class NovelRAG:
                     now, now,
                 ),
             )
-            # 更新 FTS
+            # 更新 FTS（含中文二元组分词列）
             self.conn.execute("DELETE FROM fts_memories WHERE chunk_id = ?", (chunk_id,))
             self.conn.execute(
                 """
-                INSERT INTO fts_memories (chunk_id, claim, premise, falsifier, subject, tags)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO fts_memories (chunk_id, claim, premise, falsifier, subject, tags, fts_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (chunk_id, claim, premise or "", falsifier or "", subject or "", tags or ""),
+                (
+                    chunk_id, claim, premise or "", falsifier or "", subject or "", tags or "",
+                    fts_text_for(claim, premise, falsifier, subject, tags),
+                ),
             )
 
         return chunk_id
@@ -355,7 +445,8 @@ class NovelRAG:
                 INSERT OR REPLACE INTO relations (a, b, rel, note, chapter_no, chunk_id, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
                 """,
-                (a, b, rel, note, chapter_no, chunk_id, now),
+                # SQLite 的 UNIQUE 对 NULL 互不相等，chunk_id 必须落成 '' 才能真正去重
+                (a, b, rel, note, chapter_no, chunk_id or "", now),
             )
             return cur.lastrowid
 
@@ -428,15 +519,9 @@ class NovelRAG:
             )
             matched_relations = [dict(r) for r in cur.fetchall()]
 
-        # 3. 全文与语义关键词构建（2~3 元重叠 n-gram + 英文单词）
-        en_words = re.findall(r'[A-Za-z0-9_]{2,}', q)
-        cn_chars = re.sub(r'[^\u4e00-\u9fff]', '', q)
-        ngram_set = set(en_words)
-        for n in (2, 3):
-            for i in range(len(cn_chars) - n + 1):
-                ngram_set.add(cn_chars[i : i + n])
-        tokens = sorted(list(ngram_set), key=lambda x: len(x), reverse=True)
-        fts_query = ' OR '.join(f'"{t}"' for t in tokens[:8]) if tokens else f'"{q[:8]}"'
+        # 3. 全文关键词：与入库同一套切分（中文二元组 + 英文单词），确保中文子串可命中
+        tokens = fts_tokens(q)
+        fts_query = " OR ".join(f'"{t}"' for t in tokens[:24]) if tokens else ""
         fts_hits: Dict[str, float] = {}
         if fts_query.strip():
             try:
@@ -450,8 +535,8 @@ class NovelRAG:
                     (fts_query,),
                 )
                 for row in cur.fetchall():
-                    # bm25 分数越负越相关，取反变正
-                    fts_hits[row["chunk_id"]] = max(0.1, -row["rank_score"])
+                    # bm25 分数越负越相关，取反变正；封顶避免单条记忆压死其余信号
+                    fts_hits[row["chunk_id"]] = max(0.1, min(6.0, -row["rank_score"]))
             except sqlite3.OperationalError:
                 # 容错：FTS 语法异常时降级
                 pass
@@ -507,6 +592,12 @@ class NovelRAG:
             tier_bonus = max(0, (4 - tier) * 0.3)
 
             final_score = (base_score + tier_bonus) * weight
+
+            # 无相关性信号（既没命中 FTS，也没命中实体名）的记忆整体下沉：
+            # 否则 tier-0 铁律会以固定高分霸占 top-k，检索就退化成"每次复读同一批规则"。
+            # 铁律仍会通过 alerts 单独呈现，不会丢。
+            if tokens and base_score <= 0.0:
+                final_score *= 0.15
 
             # 取代链压制
             if is_superseded:
