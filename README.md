@@ -682,9 +682,15 @@ python3 scripts/novel_flow_executor.py continue-write \
 python3 scripts/chapter_gate_check.py \
   --project-root ./我的小说 --chapter-file ./我的小说/03_manuscript/第15章.md
 
-# RAG检索
+# RAG检索与剧情上下文
 python3 scripts/plot_rag_retriever.py build --project-root ./我的小说
 python3 scripts/plot_rag_retriever.py query --project-root ./我的小说 --query "剧情关键词"
+
+# Novel-RAG 独立高维记忆与 Obsidian 图谱联动
+python3 scripts/novel_rag_core.py init --project-root ./我的小说
+python3 scripts/novel_rag_core.py query --project-root ./我的小说 --query "剧情关键词"
+python3 scripts/obsidian_graph_bridge.py export --project-root ./我的小说 # 导出 Obsidian 笔记与 Canvas
+python3 scripts/obsidian_graph_bridge.py import --project-root ./我的小说 # 从 Obsidian 双链回写 RAG
 
 # 联网调研
 python3 scripts/research_agent.py plan --genre 历史 --topic "唐朝安史之乱"

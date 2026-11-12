@@ -2436,6 +2436,29 @@ def one_click(args: argparse.Namespace) -> Dict[str, object]:
         if str(idea_seed_file) not in files["changed"]:
             files["changed"].append(str(idea_seed_file))
 
+    # 初始化 Novel-RAG 独立数据库与 Obsidian 图谱结构
+    try:
+        from novel_rag_core import NovelRAG
+        from obsidian_graph_bridge import ObsidianBridge
+        rag = NovelRAG(project_root)
+        rag.ingest_from_workspace()
+        if getattr(args, "title", None):
+            rag.remember(f"书名：《{args.title}》", mtype="fact", tier=0, subject="meta")
+        if getattr(args, "genre", None):
+            rag.remember(f"题材：{args.genre}", mtype="fact", tier=0, subject="meta")
+        if getattr(args, "core_taboo", None):
+            rag.remember(f"核心禁区：{args.core_taboo}", mtype="preference", tier=0, subject="iron_law")
+        bridge = ObsidianBridge(project_root)
+        bridge.export_entities_to_vault()
+        bridge.export_canvas()
+        bridge.close()
+        rag.close()
+        rag_db = project_root / ".novel_rag" / "novel_memory.db"
+        if rag_db.exists() and str(rag_db) not in files["changed"]:
+            files["changed"].append(str(rag_db))
+    except Exception:
+        pass
+
     return {
         "ok": b_code == 0,
         "command": "one-click",
