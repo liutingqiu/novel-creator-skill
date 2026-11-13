@@ -47,6 +47,8 @@ ASSUMPTIONS = {
     "遮挡年增速": 3.0e-4,           # 集能群每年多挡掉的比例
     "已遮挡年数": 40.0,             # 从哪一年开始关帘
     "气候敏感度_K_per_W": 0.75,     # 每 W/m2 辐射强迫对应的平衡温度变化
+    "洞天面积占比": 0.05,           # 灵气配额集中投放的面积比例
+    "局地再分配系数": 0.35,         # 大气环流会带走一部分局地加热
 }
 
 
@@ -126,6 +128,31 @@ def occlusion_dimming_kelvin():
     return forcing, forcing * ASSUMPTIONS["气候敏感度_K_per_W"]
 
 
+def climate_phase():
+    """气候相图：全球、洞天、凡间三个温度偏移（相对工业化前基线）。"""
+    earth_area = 4.0 * math.pi * R_EARTH ** 2
+    quota = ASSUMPTIONS["天道地表散热配额_W"]
+    ratio = ASSUMPTIONS["洞天面积占比"]
+    share = ASSUMPTIONS["局地再分配系数"]
+
+    global_forcing = quota / earth_area - occlusion_now() * 240.0
+    dongtian_forcing = quota / (earth_area * ratio) * share
+    fanjian_forcing = -occlusion_now() * 240.0
+
+    k = ASSUMPTIONS["气候敏感度_K_per_W"]
+    return {
+        "global_dt_k": global_forcing * k,
+        "dongtian_flux_w_m2": dongtian_forcing,
+        "dongtian_dt_k": dongtian_forcing * k,
+        "fanjian_dt_k": fanjian_forcing * k,
+        "years_to_fanjian_collapse": years_until_target_occlusion(0.05) - ASSUMPTIONS["已遮挡年数"],
+    }
+
+
+def years_remaining_to_occlusion(target=0.05):
+    return years_until_target_occlusion(target) - ASSUMPTIONS["已遮挡年数"]
+
+
 def years_until_target_occlusion(target=0.05):
     g = ASSUMPTIONS["遮挡年增速"]
     return math.log(1.0 - target) / math.log(1.0 - g)
@@ -160,6 +187,8 @@ def build_facts():
         "occlusion_cooling_k": occlusion_dimming_kelvin()[1],
         "years_until_5pct": years_until_target_occlusion(0.05),
         "planet_heat": planet_heat_budget(),
+        "climate": climate_phase(),
+        "years_remaining": years_remaining_to_occlusion(0.05),
         "occlusion_100y": occlusion_fraction(100.0, 0.003),
         "occlusion_300y": occlusion_fraction(300.0, 0.003),
         "occlusion_1000y": occlusion_fraction(1000.0, 0.003),
@@ -274,7 +303,7 @@ def build_markdown(facts):
         "| 当前遮挡比例（已关 {:g} 年） | {:.2%} |".format(ASSUMPTIONS["已遮挡年数"], facts["occlusion_now"]),
         "| 辐射强迫 | {:.1f} W/m2 |".format(facts["occlusion_forcing_w_m2"]),
         "| 对应平衡降温 | {:.1f} K |".format(facts["occlusion_cooling_k"]),
-        "| 遮挡到 5%（农业崩溃线）还需 | {:.0f} 年 |".format(facts["years_until_5pct"]),
+        "| 遮挡到 5%（农业崩溃线）还需 | {:.0f} 年 |".format(facts["years_remaining"]),
         "",
         "**硬结论**：遮挡不是背景装饰，它是一条**倒计时**。",
         "关得太快，生物圈先死（它自己也需要生物圈散热）；关得太慢，它的功率缺口补不上。",
@@ -291,6 +320,28 @@ def build_markdown(facts):
         "**硬结论**：朗道尔极限是下界，数值极小，它永远不是危机的直接原因。",
         "它是为什么不能靠无限算力硬解的理由：算得越多，下限散热越大，而散热面积有限。",
         "危机在散热瓶颈，不在极限本身。草案 v1.0 写成擦除信息产生极限高热，方向反了。",
+        "",
+        "## 九、气候相图：同一个世界，两种温度",
+        "",
+        "| 区域 | 额外辐射强迫 | 温度偏移 | 这笔账记在谁头上 |",
+        "| :--- | ---: | ---: | :--- |",
+        "| 全球平均 | {:.2f} W/m2 | {:+.1f} K | 配额加热与遮挡降温相抵 |".format(
+            facts["planet_heat"]["flux_w_m2"] - facts["occlusion_now"] * 240.0,
+            facts["climate"]["global_dt_k"]),
+        "| 洞天（{}% 面积） | {:.1f} W/m2 | {:+.1f} K | 灵气配额集中投放 |".format(
+            ASSUMPTIONS["洞天面积占比"] * 100.0,
+            facts["climate"]["dongtian_flux_w_m2"],
+            facts["climate"]["dongtian_dt_k"]),
+        "| 凡间 | {:.1f} W/m2 | {:+.1f} K | 一滴配额都拿不到，只吃遮挡 |".format(
+            facts["occlusion_forcing_w_m2"], facts["climate"]["fanjian_dt_k"]),
+        "",
+        "**硬结论**：凡间的冷不是天灾，是**配额被抽走**；洞天的暖不是福地，是**炉子**。",
+        "两者在同一个物理系统里，用的是同一笔账。",
+        "",
+        "**外推**：再 {:.0f} 年，凡间降到 -9 K 量级，农业崩溃；而洞天温度几乎不受影响。".format(
+            facts["climate"]["years_to_fanjian_collapse"]),
+        "这意味着天道**从未把凡间的存续写进约束条件**——它只要洞天。",
+        "这条外推是全书最冷的一次计算：不是有人要害你，是没人把你算进去。",
         "",
         "---",
         "",
@@ -335,6 +386,15 @@ def check(facts):
     if facts["occlusion_now"] > 0.03:
         failures.append("当前遮挡已达 {:.1%}，全球降温超过 5 K，文明无法维持".format(
             facts["occlusion_now"]))
+
+    climate = facts["climate"]
+    if not -5.0 < climate["fanjian_dt_k"] < 0.0:
+        failures.append("凡间温度偏移 {:.1f} K 超出可生存区间".format(climate["fanjian_dt_k"]))
+    if not 5.0 < climate["dongtian_dt_k"] < 20.0:
+        failures.append("洞天温度偏移 {:.1f} K 失调：太冷则无意义，太热则不可居".format(
+            climate["dongtian_dt_k"]))
+    if not -2.0 < climate["global_dt_k"] < 1.0:
+        failures.append("全球平均温度偏移 {:.1f} K 失衡".format(climate["global_dt_k"]))
 
     return failures
 
