@@ -150,6 +150,45 @@ def water_per_day(power, evaporative_share=1.0):
     return cooling_water_demand(power, evaporative_share) * 86400.0 / 1000.0
 
 
+def intake_rate(flux, area=1.8, eta=0.1):
+    """清气汲取功率：局部通量 x 有效面积 x 吸收效率。"""
+    return flux * area * eta
+
+
+def time_to_energy(energy, rate):
+    """攒够 given 能量所需时间（s）。"""
+    return energy / rate
+
+
+def travel_speed(power, drag=0.15):
+    """阻力功率 P=0.15 v^3 下的持续速度（m/s）。"""
+    return (max(power, 0.0) / drag) ** (1.0 / 3.0)
+
+
+def travel_time(distance_m, power):
+    return distance_m / travel_speed(power)
+
+
+def siege_days(stock_stones, power):
+    """库存能撑多少天：灵石数 / 日耗。"""
+    return stock_stones / stone_rate(power)
+
+
+def logistic_power(t_years, p0=1e3, growth=0.1, pmax=None):
+    """修为生长的 logistic 曲线（受功率上限约束）。"""
+    pmax = max_power() if pmax is None else pmax
+    k = (pmax - p0) / p0
+    return pmax / (1.0 + k * math.exp(-growth * t_years))
+
+
+def years_to_power(target, p0=1e3, growth=0.1, pmax=None):
+    """从 p0 长到 target 需要的年数（logistic 反解）。"""
+    pmax = max_power() if pmax is None else pmax
+    if target >= pmax:
+        return float("inf")
+    return math.log(((pmax - p0) / p0) * (target / (pmax - target))) / growth
+
+
 def ladder():
     """功率-面积-灵石 阶梯：用来替代固定境界。"""
     rows = []
