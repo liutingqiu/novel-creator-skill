@@ -25,6 +25,12 @@ if str(SCRIPT_DIR) not in sys.path:
 from common import ensure_dir, normalize_text, read_text, write_text
 from novel_rag_core import NovelRAG
 
+def _safe_note_name(name: str) -> str:
+    """实体名转文件名：去掉路径分隔符等非法字符，避免导出时崩掉。"""
+    cleaned = re.sub(r"[\\/:*?\"<>|]", "_", str(name or "")).strip()
+    return cleaned or "unnamed"
+
+
 WIKILINK_RE = re.compile(r"\[\[([^\|\]\n]+)(?:\|([^\]\n]+))?\]\]")
 FRONTMATTER_RE = re.compile(r"^---\s*\n([\s\S]*?)\n---\s*\n")
 
@@ -124,6 +130,12 @@ class ObsidianBridge:
             full_content = "\n".join(frontmatter_lines) + "\n\n" + "\n".join(body_lines)
             write_text(target_path, full_content)
             exported_count += 1
+
+        # 清理不再存在的实体笔记（本目录是生成物，以 SQLite 为准）
+        valid_names = {f"{ent['etype']}_{_safe_note_name(ent['name'])}.md" for ent in entities}
+        for stale in self.entities_dir.glob("*.md"):
+            if stale.name not in valid_names:
+                stale.unlink()
 
         # 同时生成 Mermaid 关系图汇总页
         self._export_mermaid_summary(entities, relations)
