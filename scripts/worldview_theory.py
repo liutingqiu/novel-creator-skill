@@ -104,6 +104,31 @@ def dongtian_capacity(area_per_person):
     return {"total_m2": total, "capacity": total / area_per_person}
 
 
+def telemetry_bits(rate_bps=1.0e12, years=200.0):
+    """巨构在 given 年内能接收的遥测总量（bit）。"""
+    return rate_bps * years * 3.156e7
+
+
+def mind_state_bits(n_minds=1.0e9, bits_per_mind=1.0e15):
+    """要完整描述全体心智所需的信息量（bit）。"""
+    return n_minds * bits_per_mind
+
+
+def observation_deficit(years=200.0):
+    """观测赤字：所需信息 / 可获得信息。大于 1 表示永远看不全。"""
+    return mind_state_bits() / telemetry_bits(years=years)
+
+
+def per_person_bandwidth(n_minds=1.0e9, rate_bps=1.0e12):
+    """摊到每个人头上的遥测速率（bit/s）。"""
+    return rate_bps / n_minds
+
+
+def probe_duration(bits=1.0e15, rate_bps=1.0e12):
+    """全分辨率探测一个人的状态需要占用多久全站带宽（s）。"""
+    return bits / rate_bps
+
+
 def ladder():
     """功率-面积-灵石 阶梯：用来替代固定境界。"""
     rows = []

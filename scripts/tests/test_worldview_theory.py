@@ -59,5 +59,23 @@ class TestPowerScaling(unittest.TestCase):
         self.assertGreater(cap["capacity"], 1e6)
 
 
+
+class TestInformationBudget(unittest.TestCase):
+    def test_telemetry_over_two_centuries(self):
+        self.assertAlmostEqual(wt.telemetry_bits() / 6.31e21, 1.0, places=2)
+
+    def test_observation_deficit_is_order_hundred(self):
+        # 赤字必须大于 1：否则"全知"就成立了，整个设定塌掉
+        self.assertGreater(wt.observation_deficit(), 10.0)
+        self.assertLess(wt.observation_deficit(), 1e4)
+
+    def test_per_person_bandwidth_is_kilobit(self):
+        self.assertAlmostEqual(wt.per_person_bandwidth() / 1e3, 1.0, places=6)
+
+    def test_probe_duration_is_quarter_hour(self):
+        # 天劫 = 独占全站带宽约 1000 秒
+        self.assertTrue(600 <= wt.probe_duration() <= 1800)
+
+
 if __name__ == "__main__":
     unittest.main()
