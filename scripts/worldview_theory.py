@@ -189,6 +189,26 @@ def years_to_power(target, p0=1e3, growth=0.1, pmax=None):
     return math.log(((pmax - p0) / p0) * (target / (pmax - target))) / growth
 
 
+def array_junction_area(power, density=1e8):
+    """阵基的有效结面积：受材料功率密度上限约束。"""
+    return power / density
+
+
+def pill_energy(mass_kg, density=1e7):
+    """丹药的可释放能量（J）。上限取亚稳化学态约 1e7 J/kg。"""
+    return mass_kg * density
+
+
+def pill_seconds(power, mass_kg=0.01, density=1e7):
+    """一颗丹能撑多久的全力输出（s）。"""
+    return pill_energy(mass_kg, density) / power
+
+
+def phase_mismatch_cost(detune, q_factor=1e4):
+    """失谐导致的效率损失：1/(1+Q^2*(df/f)^2) 的倒数近似。"""
+    return 1.0 + (q_factor * detune) ** 2
+
+
 def ladder():
     """功率-面积-灵石 阶梯：用来替代固定境界。"""
     rows = []
