@@ -414,7 +414,7 @@ def main(argv=None):
             for item in failures:
                 print("[FAIL] " + item, file=sys.stderr)
             return 1
-        print("[OK] 世界观账本 6 项断言全部通过")
+        print("[OK] 世界观账本断言全部通过（9 组）")
         return 0
 
     if args.format == "json":
