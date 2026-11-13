@@ -100,5 +100,38 @@ class TestTransportAndInstitutions(unittest.TestCase):
         self.assertLess(wt.water_per_day(1e8, 0.3), wt.water_per_day(1e8, 1.0))
 
 
+
+class TestDynamics(unittest.TestCase):
+    def test_leyline_intake_is_kilowatt(self):
+        self.assertAlmostEqual(wt.intake_rate(1e4) / 1.8e3, 1.0, places=2)
+
+    def test_ambient_intake_is_watts(self):
+        self.assertTrue(1.0 < wt.intake_rate(13.7) < 10.0)
+
+    def test_speed_scales_as_cube_root(self):
+        # 功率涨 1000 倍，速度只涨 10 倍
+        ratio = wt.travel_speed(1e8) / wt.travel_speed(1e5)
+        self.assertAlmostEqual(ratio, 10.0, places=1)
+
+    def test_speed_at_1e5_is_about_87(self):
+        self.assertAlmostEqual(wt.travel_speed(1e5), 87.0, delta=2.0)
+
+    def test_reserve_time_is_hours(self):
+        hours = 1e9 / 1e5 / 3600.0
+        self.assertTrue(2.0 < hours < 4.0)
+
+    def test_growth_requires_century(self):
+        years = wt.years_to_power(1e8)
+        self.assertTrue(80 < years < 200)
+
+    def test_siege_is_about_two_weeks(self):
+        self.assertAlmostEqual(wt.siege_days(1e6, 1e9), 11.6, delta=0.5)
+
+    def test_logistic_starts_at_p0_and_saturates(self):
+        self.assertAlmostEqual(wt.logistic_power(0) / 1e3, 1.0, places=6)
+        # 长时间后贴近上限（浮点下可能相等，按相对误差判）
+        self.assertAlmostEqual(wt.logistic_power(2000) / wt.max_power(), 1.0, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()
