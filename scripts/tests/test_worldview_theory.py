@@ -77,5 +77,28 @@ class TestInformationBudget(unittest.TestCase):
         self.assertTrue(600 <= wt.probe_duration() <= 1800)
 
 
+
+class TestTransportAndInstitutions(unittest.TestCase):
+    def test_peclet_is_advection_dominated(self):
+        # 河流与大气都必须 Pe >> 1，否则"毒地成廊道"不成立
+        self.assertGreater(wt.peclet(1.0, 1e4, 0.1), 1e3)
+        self.assertGreater(wt.peclet(5.0, 1e4, 10.0), 1e3)
+
+    def test_river_concentration_is_mg_per_litre(self):
+        # 1e6 kg/年 排入 100 m3/s 的河，浓度应在 0.3 mg/L 量级
+        mg_per_l = wt.river_concentration(1e6, 100.0) * 1e6
+        self.assertTrue(0.1 < mg_per_l < 1.0)
+
+    def test_water_demand_for_gigawatt(self):
+        # 1e9 W 全蒸发散热约 3.6e4 吨/天
+        self.assertAlmostEqual(wt.water_per_day(1e9) / 36000.0, 1.0, places=2)
+
+    def test_water_demand_scales_linearly(self):
+        self.assertAlmostEqual(wt.water_per_day(1e8) / wt.water_per_day(1e7), 10.0, places=6)
+
+    def test_evaporative_share_reduces_demand(self):
+        self.assertLess(wt.water_per_day(1e8, 0.3), wt.water_per_day(1e8, 1.0))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -129,6 +129,27 @@ def probe_duration(bits=1.0e15, rate_bps=1.0e12):
     return bits / rate_bps
 
 
+def peclet(velocity, length, dispersion):
+    """佩克莱数：Pe >> 1 表示对流主导（污染物成廊道），Pe << 1 表示扩散主导。"""
+    return velocity * length / dispersion
+
+
+def river_concentration(mass_per_year_kg, flow_m3s):
+    """河流中污染物的稳定浓度（kg/m3）。"""
+    litres = flow_m3s * 3.156e7 * 1000.0
+    return mass_per_year_kg / litres
+
+
+def cooling_water_demand(power, evaporative_share=1.0, latent=2.4e6):
+    """蒸发散热带走 given 功率所需的水（kg/s）。"""
+    return power * evaporative_share / latent
+
+
+def water_per_day(power, evaporative_share=1.0):
+    """折算成吨/天。"""
+    return cooling_water_demand(power, evaporative_share) * 86400.0 / 1000.0
+
+
 def ladder():
     """功率-面积-灵石 阶梯：用来替代固定境界。"""
     rows = []
