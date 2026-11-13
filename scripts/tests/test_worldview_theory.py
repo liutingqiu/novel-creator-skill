@@ -133,5 +133,26 @@ class TestDynamics(unittest.TestCase):
         self.assertAlmostEqual(wt.logistic_power(2000) / wt.max_power(), 1.0, places=6)
 
 
+
+class TestDevices(unittest.TestCase):
+    def test_junction_area_is_small(self):
+        # 1e9 W 的结面积只有 10 m2：材料不是瓶颈
+        self.assertAlmostEqual(wt.array_junction_area(1e9) / 10.0, 1.0, places=6)
+
+    def test_pill_energy_is_kilojoule_per_ten_grams(self):
+        self.assertAlmostEqual(wt.pill_energy(0.01) / 1e5, 1.0, places=6)
+
+    def test_pill_lasts_one_second_at_full_power(self):
+        # "丹药不是油箱"的核心数字
+        self.assertAlmostEqual(wt.pill_seconds(1e5), 1.0, places=6)
+
+    def test_pill_lasts_longer_at_low_power(self):
+        self.assertAlmostEqual(wt.pill_seconds(1e3), 100.0, places=6)
+
+    def test_phase_mismatch_kills_efficiency(self):
+        self.assertLess(wt.phase_mismatch_cost(1e-4), 5.0)
+        self.assertGreater(wt.phase_mismatch_cost(1e-2), 1000.0)
+
+
 if __name__ == "__main__":
     unittest.main()
