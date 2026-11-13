@@ -64,6 +64,43 @@ class TestPlaceholderFilter(unittest.TestCase):
     def test_named_character_kept(self):
         self.assertIn("玄阳子", self.names)
 
+    def test_bracket_heading_with_pending_annotation_is_skipped(self):
+        """### `[初期Boss - 宗门掌门]`（名字待定） 这类标题不应入库。"""
+        write_text(
+            self.tmp / "00_memory" / "character_tracker.md",
+            "# 角色\n\n## 主角：陈洛\n- 当前状态：待写\n\n"
+            "### `[初期Boss - 宗门掌门]`（名字待定）\n- 身份：掌门\n- 与主角关系：死敌\n",
+        )
+        self.rag.ingest_from_workspace()
+        names = {r[0] for r in self.rag.conn.execute("SELECT name FROM entities")}
+        self.assertFalse(any("初期Boss" in n for n in names), names)
+        self.assertFalse(any("`" in n or n.startswith("[") for n in names), names)
+
+
+class TestPrune(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="rag_prune_"))
+        self.rag = NovelRAG(self.tmp)
+
+    def tearDown(self):
+        self.rag.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_prune_removes_legacy_junk_only(self):
+        self.rag.add_entity("初期宗门_待定", "faction")
+        self.rag.add_entity("规则", "faction")
+        self.rag.add_entity("`[初期Boss - 掌门]`", "character")
+        self.rag.add_entity("陈洛", "character")
+        self.rag.add_relation("陈洛", "初期宗门_待定", "敌对")
+
+        result = self.rag.prune_placeholder_entities()
+        self.assertEqual(result["entities"], 3)
+
+        names = {r[0] for r in self.rag.conn.execute("SELECT name FROM entities")}
+        self.assertEqual(names, {"陈洛"})
+        rels = self.rag.conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+        self.assertEqual(rels, 0, "被清理实体的关系也要一并删除")
+
 
 if __name__ == "__main__":
     unittest.main()

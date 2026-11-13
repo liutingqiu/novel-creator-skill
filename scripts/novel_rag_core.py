@@ -127,19 +127,23 @@ def clean_entity_name(raw: str) -> Tuple[str, str]:
     例：'苏凌霜（前期假女主 / 合作者）' -> ('苏凌霜', '前期假女主 / 合作者')
     """
     text = (raw or "").strip()
-    text = text.strip("`").strip()
-    text = re.sub(r"^\*\*(.*)\*\*$", r"\1", text).strip()
-    text = re.sub(r"^\[(.*)\]$", r"\1", text).strip()
     text = re.sub(r"^\d+[\.\、]\s*", "", text)
     annotation = ""
     m = re.match(r"^(.*?)[（(]([^）)]*)[)）]\s*$", text)
     if m:
         text, annotation = m.group(1).strip(), m.group(2).strip()
+    # 装饰符在剥离注解之后统一清理（注解里的反引号/方括号会残留）
+    text = text.strip("`").strip()
+    text = re.sub(r"^\*\*(.*)\*\*$", r"\1", text).strip()
+    text = re.sub(r"^\[(.*)\]$", r"\1", text).strip()
+    text = text.strip("`").strip()
     text = re.sub(r"\s+", " ", text).strip()
     if not text or text in TABLE_HEADER_WORDS:
         return "", annotation
-    # 占位符不进图谱：等专有名词定稿后再入库，避免 [待定]/[暂代名] 污染 Obsidian
+    # 占位符不进图谱：名字或注解里带"待定/暂代"都说明还没定稿
     if any(marker in text for marker in PLACEHOLDER_MARKERS):
+        return "", annotation
+    if any(marker in (annotation or "") for marker in PLACEHOLDER_MARKERS):
         return "", annotation
     return text, annotation
 
@@ -797,6 +801,28 @@ class NovelRAG:
 
         return counts
 
+    def prune_placeholder_entities(self) -> Dict[str, int]:
+        """清掉历史遗留的脏实体：占位符、表头、带方括号/反引号的残缺名字。
+
+        只删实体与它的关系，不动记忆表；删除后由 bridge 重新导出笔记。
+        """
+        rows = self.conn.execute("SELECT id, name FROM entities").fetchall()
+        doomed = []
+        for row in rows:
+            name = row["name"] or ""
+            if (
+                name in TABLE_HEADER_WORDS
+                or any(marker in name for marker in PLACEHOLDER_MARKERS)
+                or name.startswith("[")
+                or "`" in name
+            ):
+                doomed.append((row["id"], name))
+        with self.conn:
+            for entity_id, name in doomed:
+                self.conn.execute("DELETE FROM entities WHERE id = ?", (entity_id,))
+                self.conn.execute("DELETE FROM relations WHERE a = ? OR b = ?", (name, name))
+        return {"entities": len(doomed), "names": [n for _, n in doomed]}
+
 
 # ──────────────────────────────────────────────────────────
 # CLI 入口
@@ -830,6 +856,9 @@ def main():
     ingest_p = subparsers.add_parser("ingest", help="从现有 Markdown 文件导入")
     ingest_p.add_argument("--project-root", default=".", help="小说项目根目录")
 
+    prune_p = subparsers.add_parser("prune", help="清理占位符/表头等脏实体")
+    prune_p.add_argument("--project-root", default=".", help="小说项目根目录")
+
     args = parser.parse_args()
     if not args.cmd:
         parser.print_help()
@@ -858,6 +887,9 @@ def main():
     elif args.cmd == "ingest":
         counts = rag.ingest_from_workspace()
         print(f"[OK] 导入完成: {counts}")
+    elif args.cmd == "prune":
+        counts = rag.prune_placeholder_entities()
+        print(f"[OK] 清理完成: {counts}")
 
     rag.close()
 
